@@ -1,4 +1,4 @@
-<?
+<?php
 
 //
 // Open Web Analytics - An Open Source Web Analytics Framework
@@ -16,7 +16,7 @@
 // $Id$
 //
 
-require_once('owa_caller.php');
+require_once(OWA_BASE_CLASSES_DIR.'owa_caller.php');
 
 /**
  * Wordpress Caller class
@@ -38,24 +38,32 @@ class owa_wp extends owa_caller {
 	 */
 	function owa_wp($config = null) {
 		
+		// needed because some of worpresses templates output prior to plugins being called
+		// which breaks OWA redirects.
+		ob_start();
+		
 		$this->owa_caller($config);
-		$this->e = &owa_error::get_instance();
-		$this->controller = new owa;
+		
 		return;
 	}
 	
+
 	function add_link_tracking($link) {
 	
 		if (!empty($_GET[$this->config['feed_subscription_id']])):
-			return $link."&amp;"."from=feed"."&amp;".$this->config['ns'].$this->config['feed_subscription_id']."=".$_GET[$this->config['feed_subscription_id']];
+			return $link."&amp;".$this->config['ns'].$this->config['source_param']."=feed"."&amp;".$this->config['ns'].$this->config['feed_subscription_id']."=".$_GET[$this->config['feed_subscription_id']];
 		else:
-			return $link."&amp;"."from=feed";
+			return $link."&amp;".$this->config['ns'].$this->config['source_param']."=feed";
 		endif;
-		
-		return;
 	
 	}
 	
+	/**
+	 * Wordpress filter method. Adds tracking to feed links.
+	 * 
+	 * @var string the feed link
+	 * @return string link string with special tracking id
+	 */
 	function add_feed_tracking($binfo) {
 		
 		$guid = crc32(posix_getpid().microtime());
@@ -63,13 +71,35 @@ class owa_wp extends owa_caller {
 		return $binfo."&".$this->config['ns'].$this->config['feed_subscription_param']."=".$guid;
 	}
 	
+	/**
+	 * Convienence function for logging comments.
+	 * 
+	 * @return boolean 
+	 */
 	function logComment() {
 		
-		return $this->controller->logEvent('new_comment');
+		return $this->logEvent('base.processEvent',array('event' => 'base.new_comment'));
 		
 	}
 	
+	function handleSpecialActionRequest() {
+		
+		if(isset($_GET['owa_specialAction'])):
+			$this->e->debug("special action received");
+			echo $this->handleRequestFromUrl();
+			exit;
+		elseif(isset($_GET['owa_logAction'])):
+			$this->e->debug("log action received");
+			echo $this->logEventFromUrl($_GET);
+			exit;
+		else:
+			return;
+		endif;
 
+	}
+	
+
+	
 
 }
 

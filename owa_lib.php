@@ -17,7 +17,9 @@
 //
 
 require_once 'owa_env.php';
-require_once (OWA_PEARLOG_DIR . '/Log.php');
+require_once(OWA_PEARLOG_DIR . '/Log.php');
+require_once(OWA_INCLUDE_DIR.'/class.inputfilter.php');
+//require_once(OWA_BASE_CLASS_DIR.'settings.php');
 
 /**
  * Utility Functions
@@ -119,19 +121,6 @@ class owa_lib {
 				'second' 			=> date("s", $timestamp),
 				'timestamp'			=> $timestamp
 			);
-	}
-		
-	/**
-	 * Stub of debug Handler
-	 *
-	 * @return string
-	 * @access 	public
-	 * @static 
-	 */
-	function &get_debugmsgs() {
-		
-		static $msgs;
-		return $msgs;
 	}
 		
 	/**
@@ -267,7 +256,7 @@ class owa_lib {
 				return sprintf("%s, %d%s %s",
 							owa_lib::get_month_label($params['month']),
 							$params['day'],
-							$day_suffix,
+							owa_lib::setDaySuffix($params['day']),
 							$params['year']				
 						);
 				break;
@@ -389,62 +378,328 @@ class owa_lib {
 		return $url;
 	}
 	
-	/**
-	 * Builds date param array from GET
-	 *
-	 * @return array
-	 */
-	function getRestparams() {
+	function inputFilter($array) {
 		
-		$config = &owa_settings::get_settings();
+		$f = new InputFilter;
 		
-		$params = array();
-		
-		$params['owa_action'] = $_GET['owa_action'];
-		$params['owa_page'] = $_GET['owa_page'];
-		$params['year'] = $_GET['year'];
-		$params['month'] = $_GET['month'];
-		$params['day'] = $_GET['day'];
-		$params['dayofyear'] = $_GET['dayofyear'];
-		$params['weekofyear'] = $_GET['weekofyear'];
-		$params['hour'] = $_GET['hour'];
-		$params['minute'] = $_GET['minute'];
-		$params['year2'] = $_GET['year2'];
-		$params['month2'] = $_GET['month2'];
-		$params['day2'] = $_GET['day2'];
-		$params['dayofyear2'] = $_GET['dayofyear2'];
-		$params['weekofyear2'] = $_GET['weekofyear2'];
-		$params['hour2'] = $_GET['hour2'];
-		$params['minute2'] = $_GET['minute2'];
-		$params['limit'] = $_GET['limit'];
-		$params['offset'] = $_GET['offset'];
-		$params['sortby'] = $_GET['sortby'];
-		$params['period'] = $_GET['period'];
-		$params['site_id'] = $_GET['site_id'];
-		$params['type'] = $_GET['type'];
-		$params['api_call'] = $_GET['name'];
-		$params['session_id'] = $_GET['session_id'];
-		$params['visitor_id'] = $_GET['visitor_id'];
-		$params['document_id'] = $_GET['document_id'];
-		$params['referer_id'] = $_GET['referer_id'];
-		$params['source'] = $_GET['source'];
-		$params['page_url'] = base64_decode($_GET['page_url']);
-		$params['target_url'] = base64_decode($_GET['target_url']);
-		$params['dom_element_name'] = $_GET['dom_element_name'];
-    	$params['dom_element_value'] = $_GET['dom_element_value'];
-    	$params['dom_element_id'] = $_GET['dom_element_id'];
-    	$params['dom_element_x'] = $_GET['dom_element_x'];
-    	$params['dom_element_y'] = $_GET['dom_element_y'];
-    	$params['dom_element_text'] = $_GET['dom_element_text'];
-    	$params['dom_element_tag'] = $_GET['dom_element_tag'];
-    	$params['click_x'] = $_GET['click_x'];
-    	$params['click_y'] = $_GET['click_y'];
-    	
-		
-	
-		return $params;
+		return $f->process($array);
 		
 	}
+	
+	/**
+	 * Generic Factory method
+	 *
+	 * @param string $class_dir
+	 * @param string $class_prefix
+	 * @param string $class_name
+	 * @param array $conf
+	 * @return object
+	 */
+	function &factory($class_dir, $class_prefix, $class_name, $conf = array(), $class_suffix = '') {
+		
+        $class_dir = strtolower($class_dir).DIRECTORY_SEPARATOR;
+        $classfile = $class_dir . $class_name . '.php';
+		$class = $class_prefix . $class_name . $class_suffix;
+		
+        /*
+         * Attempt to include a version of the named class, but don't treat
+         * a failure as fatal.  The caller may have already included their own
+         * version of the named class.
+         */
+        if (!class_exists($class)):
+            include_once $classfile;
+        endif;
+
+        /* If the class exists, return a new instance of it. */
+        if (class_exists($class)):
+            $obj = &new $class($conf);
+            return $obj;
+        endif;
+
+        $null = null;
+        return $null;
+    }
+	
+    /**
+     * Generic Object Singleton
+     *
+     * @param string $class_dir
+     * @param string $class_prefix
+     * @param string $class_name
+     * @param array $conf
+     * @return object
+     */
+    function &singleton($class_dir, $class_prefix, $class_name, $conf = array()) {
+    	
+        static $instance;
+        
+        if (!isset($instance)):
+        	// below missing a reference becasue the static vriable can not handle a reference 
+        	$instance = owa_lib::factory($class_dir, $class_prefix, $class_name, $conf = array());
+        endif;
+        
+        return $instance;
+    }
+    
+    /**
+     * 302 HTTP redirect the user to a new url
+     *
+     * @param string $url
+     */
+    function redirectBrowser($url) {
+    	
+    	//ob_clean();
+	    // 302 redirect to URL 
+		header ('Location: '.$url, true);
+		header ('HTTP/1.0 302 Found', true);
+		return;
+    }
+	
+	function makeLinkQueryString($query_params) {
+		
+		$new_query_params = array();
+		
+		//Load params passed by caller
+		if (!empty($this->caller_params)):
+			foreach ($this->caller_params as $name => $value) {
+				if (!empty($value)):
+					$new_query_params[$name] = $value;	
+				endif;
+			}
+		endif;
+
+		// Load overrides
+		if (!empty($query_params)):
+			foreach ($query_params as $name => $value) {
+				if (!empty($value)):
+					$new_query_params[$name] = $value;	
+				endif;
+			}
+		endif;
+		
+		// Construct GET request
+		if (!empty($new_query_params)):
+			foreach ($new_query_params as $name => $value) {
+				if (!empty($value)):
+					$get .= $name . "=" . $value . "&";	
+				endif;
+			}
+		endif;
+		
+		return $get;
+		
+	}
+	
+	function getRequestParams() {
+		
+		// Clean Input arrays
+		$params = owa_lib::inputFilter($_REQUEST);
+		
+		return owa_lib::stripParams($params);
+	}
+	
+	function stripParams($params) {
+		
+		
+		$c = &owa_coreAPI::configSingleton();
+		$config = $c->fetch('base');
+		
+		$striped_params = array();
+		
+		$len = strlen($config['ns']);
+		
+		foreach ($params as $n => $v) {
+			
+			// if namespace is present in param
+			if (strstr($n, $config['ns'])):
+				// strip the namespace value
+				$striped_n = substr($n, $len);  
+				//add to striped array
+				$striped_params[$striped_n] = $v;
+			
+			endif;
+			
+		}
+		
+		return $striped_params;
+		
+	}
+	/**
+	 * module specific require method
+	 *
+	 * @param unknown_type $module
+	 * @param unknown_type $file
+	 * @return unknown
+	 * @deprecated 
+	 */
+	function moduleRequireOnce($module, $file) {
+		
+		return require_once(OWA_BASE_DIR.'/modules/'.$module.'/'.$file.'.php');
+	}
+	
+	/**
+	 * module specific factory
+	 *
+	 * @param unknown_type $modulefile
+	 * @param unknown_type $class_suffix
+	 * @param unknown_type $params
+	 * @return unknown
+	 * @deprecated 
+	 */
+	function moduleFactory($modulefile, $class_suffix = null, $params = '') {
+		
+		list($module, $file) = split("\.", $modulefile);
+		$class = 'owa_'.$file.$class_suffix;
+		
+		// Require class file if class does not already exist
+		if(!class_exists($class)):	
+			owa_lib::moduleRequireOnce($module, $file);
+		endif;
+			
+		$obj = owa_lib::factory(OWA_BASE_DIR.'/modules/'.$module, '', $class, $params);
+		$obj->module = $module;
+		
+		return $obj;
+	}
+    
+	/**
+	 * redirects borwser to a particular view
+	 *
+	 * @param unknown_type $data
+	 */
+	function redirectToView($data) {
+		
+		$c = &owa_coreAPI::configSingleton();
+		$config = $c->fetch('base');
+		
+		$control_params = array('view_method', 'auth_status');
+		
+		
+		$get = '';
+		
+		foreach ($data as $n => $v) {
+			
+			if (!in_array($n, $control_params)): 			
+			
+				$get .= $config['ns'].$n.'='.$v.'&';
+			
+			endif;
+		}
+		$new_url = sprintf($this->config['link_template'], $this->config['main_url'], $get);
+		owa_lib::redirectBrowser($new_url);
+		
+		return;
+	}
+	
+	/**
+	 * Displays a View without user authentication. Takes array of data as input
+	 *
+	 * @param array $data
+	 * @deprecated 
+	 */
+	function displayView($data, $params = array()) {
+		
+		$view =  owa_lib::moduleFactory($data['view'], 'View', $params);
+		
+		return $view->assembleView($data);
+		
+	}
+	
+	function &coreAPISingleton() {
+		
+		static $api;
+		
+		if(!isset($api)):
+			require_once('owa_coreAPI.php');
+			$api = new owa_coreAPI;
+		endif;
+		
+		return $api;
+	}
+	
+	/**
+	 * Create guid from string
+	 *
+	 * @param 	string $string
+	 * @return 	integer
+	 * @access 	private
+	 */
+	function setStringGuid($string) {
+		if (!empty($string)):
+			return crc32(strtolower($string));
+		else:
+			return;
+		endif;
+	}
+	
+	/**
+	 * Add constraints into SQL where clause
+	 *
+	 * @param 	array $constraints
+	 * @return 	string $where
+	 * @access 	public
+	 */
+	function addConstraints($constraints) {
+	
+		if (!empty($constraints)):
+		
+			$count = count($constraints);
+			
+			$i = 0;
+			
+			$where = '';
+			
+			foreach ($constraints as $key => $value) {
+					
+				if (empty($value)):
+					$i++;
+				else:
+				
+					if (!is_array($value)):
+						$where .= $key . ' = ' . "'$value'";
+					else:
+					
+						switch ($value['operator']) {
+							case 'BETWEEN':
+								$where .= sprintf("%s BETWEEN '%s' AND '%s'", $key, $value['start'], $value['end']);
+								break;
+							default:
+								$where .= sprintf("%s %s '%s'", $key, $value['operator'], $value['value']);		
+								break;
+						}
+					
+						
+					endif;
+					
+					if ($i < $count - 1):
+						
+						$where .= " AND ";
+						
+					endif;
+	
+					$i++;	
+				
+				endif;
+					
+			}
+			// needed in case all values in the array are empty
+			if (!empty($where)):
+				return $where;
+			else: 
+				return;
+			endif;
+				
+		else:
+			
+			return;
+					
+		endif;
+		
+		
+		
+	}
+	
+	
 }
 
 ?>

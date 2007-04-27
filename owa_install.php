@@ -1,4 +1,4 @@
-<?
+<?php
 
 //
 // Open Web Analytics - An Open Source Web Analytics Framework
@@ -16,8 +16,7 @@
 // $Id$
 //
 
-require_once (OWA_BASE_DIR.'/owa_settings_class.php');
-require_once (OWA_BASE_DIR.'/owa_db.php');
+require_once (OWA_BASE_DIR.'/owa_base.php');
 
 /**
  * Install Abstract Class
@@ -30,14 +29,7 @@ require_once (OWA_BASE_DIR.'/owa_db.php');
  * @version		$Revision$	      
  * @since		owa 1.0.0
  */
-class owa_install {
-	
-	/**
-	 * Configuration
-	 *
-	 * @var array
-	 */
-	var $config = array();
+class owa_install extends owa_base{
 	
 	/**
 	 * Data access object
@@ -54,11 +46,18 @@ class owa_install {
 	var $version;
 	
 	/**
-	 * Error Handler
+	 * Params array
 	 *
-	 * @var object
+	 * @var array
 	 */
-	var $e;
+	var $params;
+	
+	/**
+	 * Module name
+	 *
+	 * @var unknown_type
+	 */
+	var $module;
 	
 	/**
 	 * Constructor
@@ -68,11 +67,31 @@ class owa_install {
 
 	function owa_install() {
 		
-		$this->config = &owa_settings::get_settings();
-		$this->db = &owa_db::get_instance();
-		$this->e = &owa_error::get_instance();
+		$this->owa_base();
+		$this->db = &owa_coreAPI::dbSingleton();
 		
 		return;
+	}
+	
+	/**
+	 * Check to see if schema is installed
+	 *
+	 * @return boolean
+	 */
+	function checkForSchema() {
+		
+		foreach ($this->tables as $table) {
+			$this->e->notice('testing for existance of schema.');
+			$check = $this->db->get_row(sprintf("show tables like '%s'", $table));
+			
+			if (!empty($check)):
+				$this->e->notice(sprintf("Schema Installation aborted. Table '%s' already exists.", $table));
+				return true;
+			endif;
+		}
+		
+		return false;
+		
 	}
 	
 }

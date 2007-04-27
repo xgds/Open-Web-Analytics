@@ -1,4 +1,4 @@
-<?
+<?php
 
 //
 // Open Web Analytics - An Open Source Web Analytics Framework
@@ -17,9 +17,11 @@
 //
 
 include_once('owa_env.php');
-require_once 'owa_settings_class.php';
-require_once 'owa_controller.php';
-require_once 'owa_installer.php';
+require_once('owa_requestContainer.php');
+require_once(OWA_BASE_DIR.'/owa_auth.php');
+require_once(OWA_BASE_DIR.'/owa_base.php');
+require_once(OWA_BASE_DIR.'/owa_coreAPI.php');
+require_once(OWA_BASE_DIR.'/owa_browscap.php');
 
 /**
  * Abstract Caller class used to build application specific invocation classes
@@ -32,28 +34,21 @@ require_once 'owa_installer.php';
  * @version		$Revision$	      
  * @since		owa 1.0.0
  */
-class owa_caller {
+class owa_caller extends owa_base {
 	
 	/**
-	 * Configuration
+	 * Request Params from get or post
 	 *
 	 * @var array
 	 */
-	var $config;
+	var $params;
 	
 	/**
-	 * Error handler
+	 * Core API
 	 *
 	 * @var object
 	 */
-	var $e;
-	
-	/**
-	 * Instance of Request/Event Controller
-	 *
-	 * @var object
-	 */
-	var $controller;
+	var $api;
 	
 	/**
 	 * Constructor
@@ -63,59 +58,63 @@ class owa_caller {
 	 */
 	function owa_caller($config) {
 		
-		$this->config = &owa_settings::get_settings();
-		
-		$this->apply_caller_config($config);
-		
-		if ($this->config['fetch_config_from_db'] == true):
-			$this->load_config_from_db();
+		//load DB constants if not set already by caller
+		if(!defined('OWA_DB_HOST')):
+			$file = OWA_BASE_DIR.DIRECTORY_SEPARATOR.'conf'.DIRECTORY_SEPARATOR.'owa-config.php';
+			if (file_exists($file)):
+				include ($file);
+			else:
+				print "Uh-oh. I can't find your configuration file...";
+				exit;
+			endif;
 		endif;
+		//set_error_handler(array("owa_error", "handlePhpError"), E_ALL);
+		
+		// Sets default config and error logger
+		$this->owa_base();
+		
+		if (empty($config['configuration_id'])):
+			$config['configuration_id'] = 1;
+		endif;	
+		
+		// Applies config from db or cache
+		// needed for installs when the configuration table does not exist.
+		if ($config['do_not_fetch_config_from_db'] != true):
+			$this->c->load($config['configuration_id']);
+		endif;
+			
+		// Applies run time config overrides
+		$this->c->applyModuleOverrides('base', $config);
+		$this->e->debug('applying caller config overrides.');
+		
+		// re-fetch the array now that overrides have been applied.
+		// needed for backwards compatability 
+		$this->config = $this->c->fetch('base');
+
+		// reloads error logger now that final config values are in place
+		$this->e = null;
+		$this->e = owa_error::get_instance();
+
+		// Create Request Container
+		$this->params = &owa_requestContainer::getInstance();
+		
+		// Load the core API
+		$this->api = &owa_coreAPI::singleton();
+		
+		$this->api->caller_config_overrides = $config;
+		
+		// should only be called once to load all modules
+		$this->api->setupFramework();
 		
 		return;
 	
 	}
 	
-	/**
-	 * Applies caller specific configuration params on top of 
-	 * those specified on the global OWA config file.
-	 *
-	 * @param array $config
-	 */
-	function apply_caller_config($config) {
+	function handleRequestFromUrl()  {
 		
-		if (!empty($config)):
+		//$this->params = owa_lib::getRequestParams();
+		return $this->handleRequest();
 		
-			foreach ($config as $key => $value) {
-				
-				$this->config[$key] = $value;
-				
-			}
-
-		endif;
-					
-		return;
-
-	}
-	
-	/**
-	 * Fetches instance specific configuration params from the database
-	 * 
-	 */
-	function load_config_from_db() {
-		
-		$config_from_db = &owa_settings::fetch($this->config['configuration_id']);
-		
-		if (!empty($config_from_db)):
-			
-			foreach ($config_from_db as $key => $value) {
-			
-				$this->config[$key] = $value;
-			
-			}
-					
-		endif;
-		
-		return;
 	}
 	
 	/**
@@ -123,322 +122,265 @@ class owa_caller {
 	 *
 	 * @param array $app_params	This is an array of application specific request params
 	 */
-	function log($app_params) {
+	function log($caller_params = '') {
 		
-		return $this->controller->logEvent('page_request', $app_params);
+		return $this->logEvent('base.processRequest', $caller_params);
 		
 	}
 	
 	/**
-	 * Logs any event to the event queue
+	 * Logs an event to the event queue
+	 * 
+	 * This function sets the action to be perfromed, santizes, 
+	 * and adds all of PHP's $_SERVER vars to the $caller_params.
+	 * $_REQUEST vars are already added to $this->params in the constructor.
 	 *
-	 * @param array $app_params
+	 * @param array $caller_params
 	 * @param string $event_type
 	 * @return boolean
 	 */
-	function logEvent($event_type, $app_params) {
+	function logEvent($event_type, $caller_params = '') {
 		
-		return $this->controller->logEvent($event_type, $app_params);
-		
-	}
-	
-	function install($type) {
-		
-		$this->config['fetch_config_from_db'] = false;
-	    $installer = &owa_installer::get_instance();	   
-	    $install_check = $installer->plugins[$type]->check_for_schema();
-	    
-	    if ($install_check == false):
-		    //Install owa schema
-	    	$status = $installer->plugins[$type]->install(); 
-	    else:
-	    	// owa already installed
-	    	$status = false;
-	    endif;
-	    
-	    return $status;
-		
-	}
-	
-	function reset_config() {
-			
-		$config = $this->config->get_default_config();
-		$this->config->save($config);
-		return;
-				
-	}
-	
-	function options_page() {
-	
-		require_once(OWA_BASE_DIR.'/owa_template.php');
-		require_once(OWA_BASE_DIR.'/owa_news.php');
-		
-		//Fetch latest OWA news
-		$rss = new owa_news;
-		$news = $rss->Get($rss->config['owa_rss_url']);
-
-		//Setup templates
-		$options_page = & new owa_template;
-		$options_page->set_template($options_page->config['report_wrapper']);
-		$options_page->set('news', $news);
-		$body = & new owa_template; 
-		$body->set_template('options.tpl');// This is the inner template
-		$body->set('config', $this->config);
-		$body->set('page_title', 'OWA Options');
-		$options_page->set('content', $body);
-		// Make Page
-		echo $options_page->fetch();
-		
-		return;
-	}
-	
-	function first_request_handler() {
-		
-		header('Content-type: image/gif');
-		header('P3P: CP="'.$this->config['p3p_policy'].'"');
-		header('Expires: Sat, 22 Apr 1978 02:19:00 GMT');
-		header('Last-Modified: ' . gmdate('D, d M Y H:i:s') . ' GMT');
-		header('Cache-Control: no-store, no-cache, must-revalidate');
-		header('Cache-Control: post-check=0, pre-check=0', false);
-		header('Pragma: no-cache');
-		
-		$this->e->debug('Handling special first_hit request...');
-		
-		if (!empty($_COOKIE[$this->config['ns'].$this->config['first_hit_param']])):
-			$this->controller->process_first_request();
+		// do not log if the request is comming fro mthe preview plane of the admin interface
+		if ($this->params['preview'] == true):
+			return false;
 		endif;
-			
-		printf(
-		  '%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%',
-		  71,73,70,56,57,97,1,0,1,0,128,255,0,192,192,192,0,0,0,33,249,4,1,0,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59
-		);
-			
-		return;
-	}
-	
-	
-	function getGraph($app_params = '') {
 		
-		if(empty($app_params)):
-			$app_params = owa_lib::getRestparams();
+		
+		$params = array();
+		// Add PHP's $_SERVER scope variables to event properties
+		$params['server'] = $_SERVER;
+		
+		// Apply caller's params to event properties
+		if (!empty($caller_params)):
+			$params['caller'] = $caller_params;
 		endif;
-	
-		return $this->controller->getGraph($app_params);
 		
-	}	
+		// set controller to invoke
+		$params['action'] = $event_type;
+		
+		// Filter input
+		$params = owa_lib::inputFilter($params);
+		
+		//Load browscap
+		$bcap = new owa_browscap($params['server']['HTTP_USER_AGENT']);  ///!
+		
+		// Abort if the request is from a robot
+		if ($this->config['log_robots'] != true):
+			if ($bcap->robotCheck() == true):
+				return;
+			endif;
+		endif;
+		
+		// Fetch browser capabilities and and apply to event params
+		$params['browscap'] = get_object_vars($bcap->browser);
+	
+		return $this->handleRequest($params);
+		
+	}
 	
 	/**
-	 * Logs event whose properties are specified on the URL
+	 * Logs event params taken from request scope (url, cookies, etc.).
+	 * Takes event type from url.
 	 *
-	 * @param unknown_type $event_type
 	 * @return unknown
 	 */
-	function logEventRest($event_type) {
+	function logEventFromUrl($caller_params) {
+		ignore_user_abort(true);
 		
-		$app_params = owa_lib::getRestparams();
-	
-		return $this->controller->logEvent($event_type, $app_params);
+		//$clean_params = owa_lib::inputFilter($caller_params);
 		
-	}
-	
-	/**
-	 * Saves Configuration values to the database
-	 *
-	 * @param array $form_data
-	 */
-	function save_config($form_data) {
-		
-		//create the new config array
-		$new_config = array();
-			
-		// needed for following DB queries just in case the various 
-		// implementations of the GUI does not allow you to set this.
-		$new_config['configuration_id'] = $this->config['configuration_id'];
-			
-		foreach ($form_data as $key => $value) {
+		$striped_params = owa_lib::stripParams($caller_params);
+		$params =array();
+		// Apply caller specific params
+			foreach ($striped_params as $k => $v) {
 				
-			if ($key != 'wa_update_options'):
-				// update current config
-				$this->config[$key] = $value;
-				//add to config going to the db
-				$new_config[$key] = $value;
+				$params[$k] = base64_decode(urldecode($v));
 				
-			endif;
-		}
-		
-		owa_settings::save($new_config);
-		$this->e->notice("Configuration changes saved to database.");
-		
-		return;
-	}
-	
-	/**
-	 * Returns All Page Tags
-	 *
-	 * @param boolean $echo
-	 * @return string
-	 */
-	function placePageTags($echo = true) {
-		
-		$tags = $this->firstHitTag($echo);
-		
-		if ($this->config['log_dom_clicks'] == true):
-			$tags .= $this->clickTag($echo);
-		endif;
-		
-		if ($echo === false):
-			return $tags;
-		else:
-			;
-		endif;
+			}
 			
-		return;
+		//$this->e->debug('logEventFromUrl decoded params: '. print_r($params, true));
 		
-	}
-	
-	
-	/**
-	 * Generates First hit javascript tag
-	 *
-	 * @param boolean $echo
-	 * @return string
-	 */
-	function firstHitTag($echo = true) {
-		
-		if (empty($_COOKIE[$this->config['ns'].$this->config['first_hit_param']]) && empty($_COOKIE[$this->config['ns'].$this->config['visitor_param']])):	
-		
-			$bug  = "<script language=\"JavaScript\" type=\"text/javascript\">";
-			$bug .= "document.write('<img src=\"".$this->config['action_url']."?owa_action=".$this->config['first_hit_param']."\">');</script>";
-			//$bug .= "<noscript><img src=\"".$this->config['action_url']."?owa_action=".$this->config['first_hit_param']."\"></noscript>";		
-			if ($echo === false):
-				return $bug;
-			else:
-				echo $bug;
-			endif;
-		endif;
-		
-		return;
-
-	}
-	
-	/**
-	 * Echos the request logger javascript library
-	 *
-	 */
-	function place_log_bug() {
-		
-		$url = $this->config['public_url'].'/page.php?';
-		
-		$bug = 'var owa_url = \'' . $url . '\';';
-		
-		$bug .= file_get_contents(OWA_INCLUDE_DIR.'/webbug.js');
-		
-		echo $bug;
-		
-		return;
-		
-	}
-	
-	function clickTag($echo = true) {
-		
- 		$tag = sprintf('<SCRIPT TYPE="text/javascript" SRC="%s?owa_action=click_bug&random=%s"></SCRIPT><DIV ID="owa_click_bug"></DIV>', 
- 						$this->config['action_url'],
- 						rand());
- 						
- 		if ($echo === false):
-			return $tag;
-		else:
-			echo $tag;
-		endif;
-		
-		return;
-
-	}
-	
-	function place_click_bug() {
-		
-		$url = $this->config['action_url'].'?owa_action=log_event&event=click&';
-		
-		$js = file_get_contents(OWA_INCLUDE_DIR.'/clickbug.js');
-		
-		$bug = sprintf($js, $url, $url); 	
-		
-		echo $bug;
-		
-		return;
+		return $this->logEvent($params['action'], $params);
 		
 	}
 	
 	function requestTag($site_id) {
 		
-		$tag  = '<SCRIPT language="JavaScript">'."\n";
-		$tag .= "\t".sprintf('var owa_site_id = %s', $site_id)."\n";
-		$tag .= '</SCRIPT>'."\n\n";
- 		$tag .= sprintf('<SCRIPT TYPE="text/javascript" SRC="%s/wb.php"></SCRIPT>', 
- 						$this->config['public_url']);
- 		
- 		return $tag;
+		return $api->requestTag($site_id);
 		
 	}
 	
+	function placeHelperPageTags($echo = true) {
+		
+		$params = array();
+		$params['view'] = 'base.helperPageTags';
+		$params['view_method'] = 'delegate';
+		
+		if ($echo == false):
+			//return $this->handleHelperPageTagsRequest();
+			return $this->handleRequest($params);
+		else:
+			echo $this->handleRequest($params);
+			return;
+		endif;
+		
+	}
+	
+	function handleHelperPageTagsRequest() {
+	
+		$params = array();
+		$params['view'] = 'base.helperPageTags';
+		$params['view_method'] = 'delegate';
+		return $this->handleRequest($params);
+	
+	}
 	
 	/**
-	 * Handler for special action requests
-	 * 
-	 * This is sometimes called on every request by certain frameworks so nothing sounds be outside the 
-	 * switch statement.
+	 * Authenticated Rendering of view 
 	 *
+	 * @param array $caller_data
+	 * @return string
 	 */
-	function actionRequestHandler() {
+	function renderView($data) {
 	
-		switch ($_GET['owa_action']) {
-			
-			// This handles requests to log the delayed request contained in first_hit cookie  for new users.
-		    case $this->config['first_hit_param']:
-		    	$this->e->debug('Special action request received: first_hit');
-				$this->first_request_handler();		
-				exit;
-				
-			// This handles requests for graphs	
-			case $this->config['graph_param']:
-				$this->e->debug('Special action request received: graph');
-				$this->getGraph();
-				exit;
-				
-			// This handles requests for the click tracking javascript library	
-			case "click_bug":
-				// This is the handler for javascript request for the logging web bug.
-				$this->e->debug('Special action request received: '.$_GET['owa_action']); 
-				$this->place_click_bug();
-				exit;
-				
-			// This handles requests o log an event via http 	
-			case "log_event":
-				$this->e->debug('Special action request received: '.$_GET['owa_action']);
-				ignore_user_abort(true);
-				$this->logEventRest($_GET['event']);
-				
-				// Return 1x1 pixel
-				header('Content-type: image/gif');
-				header('P3P: CP="'.$l->config['p3p_policy'].'"');
-				header('Expires: Sat, 22 Apr 1978 02:19:00 GMT');
-				header('Last-Modified: ' . gmdate('D, d M Y H:i:s') . ' GMT');
-				header('Cache-Control: no-store, no-cache, must-revalidate');
-				header('Cache-Control: post-check=0, pre-check=0', false);
-				header('Pragma: no-cache');
-				
-				printf(
-				  '%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%',
-				  71,73,70,56,57,97,1,0,1,0,128,255,0,192,192,192,0,0,0,33,249,4,1,0,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59
-				);
-					
-				exit;
-           		
-        }
-
-        return;
-
+		$view =  $this->api->moduleFactory($data['view'], 'View', $this->params);
+		
+		//perfrom authentication
+		$auth = &owa_auth::get_instance();
+		$auth_data = $auth->authenticateUser($view->priviledge_level);
+	
+		// if auth was success then procead to assemble view.
+		if ($auth_data['auth_status'] == true):
+	
+			return $view->assembleView($data);
+		else: 
+			//$this->e->debug('RenderView: '.print_r($data, true));
+			return $this->api->displayView($auth_data);
+		endif;
+		
 	}
+	
+	/**
+	 * Displays a View without user authentication. Takes array of data as input
+	 *
+	 * @param array $data
+	 */
+	function displayView($data) {
+		
+		$view =  $this->api->moduleFactory($data['view'], 'View', $this->params);
+		
+		return $view->assembleView($data);
+		
+	}
+	
+	/**
+	 * Invokes controller to perform controller
+	 *
+	 * @param $action string
+	 * 
+	 */
+	function performAction($action) {
+		
+		// Load 
+		$controller = $this->api->moduleFactory($action, 'Controller', $this->params);
+		
+		//perfrom authentication
+		$auth = &owa_auth::get_instance();
+		
+		$data = $auth->authenticateUser($controller->priviledge_level);
+		
+		// if auth was success then procead to do action specified in the intended controller.
+		if ($data['auth_status'] == true):
+			$data = $controller->doAction();
+		endif;
+		
+		// Display view if controller calls for one.
+		if (!empty($data['view'])):
+		
+			// 
+			if ($data['view_method'] == 'delegate'):
+				return $this->api->displayView($data);
+			
+			// Redirect to a view	
+			elseif ($data['view_method'] == 'redirect'):
+				owa_lib::redirectToView($data);
+				return;
+				
+			// return an image . Will output headers and binary data.
+			elseif ($data['view_method'] == 'image'):
+				return $this->api->displayImage($data);
+			
+			else:
+				return $this->api->displayView($data);
+				
+			endif;
+		
+		elseif(!empty($data['do'])):
+		
+			if ($data['view_method'] == 'redirect'):
+				owa_lib::redirectToView($data);
+				return;
+			endif;
+		endif;
+		
+		return;
+		
+	}
+
+	
+	/**
+	 * Handles OWA internal page/action requests
+	 *
+	 * @return unknown
+	 */
+	function handleRequest($caller_params = null) {
+		
+		static $init;
+		
+		// Override request parsms with those passed by caller
+		if (!empty($caller_params)):
+		
+			foreach ($caller_params as $n => $v) {
+				$this->params[$n] = $v;
+			}
+		
+		endif;
+		
+		if ($init != true):
+			$this->e->debug('Request Params: '. print_r($this->params, true));
+		endif;
+			
+		if (!empty($this->params['action'])):
+			
+			$result =  $this->performAction($this->params['action']);
+			unset($this->params['action']);
+			
+		elseif (!empty($this->params['do'])):
+			$result =  $this->performAction($this->params['do']);	
+			//unset($this->params['action']);
+			
+		elseif ($this->params['view']):
+			// its a view request so the only data is in whats in the params
+			$result = $this->renderView($this->params);
+			unset($this->params['view']);
+			
+		else:
+			print "Caller: No view or action param found. I'm not sure what to do here.";
+			return;
+		endif;
+		
+		//clean up any open db connection
+		if ($this->config['async_db'] == false):
+			$db = &owa_coreAPI::dbSingleton();
+			$db->close();
+		endif;
+		
+		$init = true;
+		
+		return $result;
+	}
+	
 	
 }
 

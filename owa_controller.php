@@ -16,16 +16,11 @@
 // $Id$
 //
 
-require_once 'owa_event_class.php';
-require_once 'owa_settings_class.php';
-require_once 'owa_request_class.php';
-require_once 'owa_click.php';
-require_once 'owa_lib.php';
-require_once 'owa_error.php';
-require_once 'owa_browscap.php';
+require_once('owa_base.php');
+
 
 /**
- * owa Controler
+ * Abstract Controller Class
  * 
  * @author      Peter Adams <peter@openwebanalytics.com>
  * @copyright   Copyright &copy; 2006 Peter Adams <peter@openwebanalytics.com>
@@ -36,133 +31,124 @@ require_once 'owa_browscap.php';
  * @since		owa 1.0.0
  */
 
-class owa {
+
+class owa_controller extends owa_base {
 	
 	/**
-	 * Configuration
+	 * Request Parameters passed in from caller
 	 *
 	 * @var array
 	 */
-	var $config = array();
+	var $params;
 	
 	/**
-	 * Error Handler
+	 * The priviledge level required to access this controller
 	 *
-	 * @var object
+	 * @var string
 	 */
-	var $e;
-
+	var $priviledge_level;
+	
+	/**
+	 * data validation control object
+	 * 
+	 * @var Object
+	 */
+	var $v;
+	
+	/**
+	 * Data container
+	 * 
+	 * @var Array
+	 */
+	var $data = array();
+	
 	/**
 	 * Constructor
 	 *
-	 * @return owa
-	 */
-	function owa() {
-		
-		$this->config = &owa_settings::get_settings();
-		$this->e = &owa_error::get_instance();
-		
-		return;
-	}
-	
-	/**
-	 * Special first hit http request Controller
-	 * 
-	 * This controller is used by callers who delay the first page request of new users
-	 * to be processed by a second http request on the same page.
-	 *
-	 */
-	function process_first_request() {
-		
-		// Create a new request object
-		$r = new owa_request;
-		$r->state = 'page_request';
-	
-		//Load request properties from first_hit cookie if it exists
-		if (!empty($_COOKIE[$this->config['ns'].$this->config['first_hit_param']])):
-			$r->load_first_hit_properties($_COOKIE[$this->config['ns'].$this->config['first_hit_param']]);
-		endif;
-		
-		// Log the request
-		$r->log();
-		$this->e->debug(sprintf('First hit Request %d logged to event queue',
-								$r->properties['request_id']));
-		
-		return;
-	}
-	
-	/**
-	 * Graph Controller
-	 *
 	 * @param array $params
+	 * @return owa_controller
 	 */
-	function getGraph($params) {
-	
-		require_once 'owa_api.php';
-	
-		$g_api = owa_api::get_instance('graph');
+	function owa_controller($params) {
 		
-		$g_api->get($params);
-	
-			
+		$this->owa_base();
+		$this->params = $params;
+		
 		return;
 		
 	}
 	
 	/**
-	 * Fetch a vaue from the current configuration
+	 * Handles request from caller
 	 *
-	 * @param string $value
-	 * @return unknown
 	 */
-	function get_config_value($value) {
+	function doAction() {
 		
-		return $this->config[$value];
-	}
-	
-	/**
-	 * Alternative API for logging events direcly to the event queue
-	 *
-	 * @param array $app_params
-	 * @param unknown_type $event_type
-	 */
-	function logEvent($event_type, $app_params = '') {
+		$this->e->debug('Performing Action: '.get_class($this));
 		
-		// This should become a factory method call based on event type.
+		// set status msg
+		if (!empty($this->params['status_code'])):
+			$this->data['status_msg'] = $this->getMsg($this->params['status_code']);
+		endif;
 		
-		switch ($event_type) {
+		// get error msg from error code passed on the query string from a redirect.
+		if (!empty($this->params['error_code'])):
+			$this->data['error_msg'] = $this->getMsg($this->params['error_code']);
+		endif;
+		
+		if (!empty($this->v)):
+		
+			$this->v->doValidations();
 			
-			case "click":
-				$event = new owa_click;
-				break;
-			
-			case "page_request":
-				$event = new owa_request;
-				break;
+			if ($this->v->hasErrors == true):
 				
-			default:
-				$event = new owa_event;		
+				return $this->errorAction();
 			
-		}
-		
-		if (!empty($app_params)):
-			$event->_setProperties($app_params);
+			else:
+				
+				return $this->action();
+				
+			endif;
+			
 		endif;
 		
-		// Process Event		
-		$event->process();
+		return $this->action();
 		
-		// Close Db connection if one was established
-		if($this->config['async_db'] == false):
+	}
+	
+	function logEvent($event_type, $properties) {
 		
-			$db = &owa_db::get_instance();
-			$db->close();
-		
+		if (!class_exists('eventQueue')):
+			require_once(OWA_BASE_DIR.DIRECTORY_SEPARATOR.'eventQueue.php');
 		endif;
+		
+		$eq = &eventQueue::get_instance();
+		return $eq->log($properties, $event_type);
+	}
+	
+	function createValidator() {
+		
+		$this->v = owa_coreAPI::supportClassFactory('base', 'validator');
 		
 		return;
+		
 	}
-
+	
+	function addValidation($name, $value, $validation, $conf = array()) {
+	
+		if (empty($this->v)):
+			$this->createValidator();
+		endif;
+	
+		return $this->v->addValidation($name, $value, $validation, $conf);
+		
+	}
+	
+	function getValidationErrorMsgs() {
+		
+		return $this->v->getErrorMsgs();
+		
+	}
+	
 }
 
 ?>

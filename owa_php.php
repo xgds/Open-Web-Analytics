@@ -1,4 +1,4 @@
-<?
+<?php
 
 //
 // Open Web Analytics - An Open Source Web Analytics Framework
@@ -15,8 +15,8 @@
 //
 // $Id$
 //
-
-require_once('owa_caller.php');
+require_once('owa_env.php');
+require_once(OWA_BASE_CLASSES_DIR.'owa_caller.php');
 
 /**
  * Generic Caller Class
@@ -42,14 +42,11 @@ class owa_php extends owa_caller {
 	function owa_php($config = null) {
 		
 		$this->owa_caller($config);
-		$this->e = &owa_error::get_instance();
-		$this->controller = new owa;
+
 		return;
 		
 	}
-	
-	
-	
+
 }
 
 ?>

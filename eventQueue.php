@@ -60,8 +60,9 @@ class eventQueue {
 	function &get_instance() {
 	
 		static $eq;
-	
-		$this->config = &owa_settings::get_settings();	
+		
+		$c = &owa_coreAPI::configSingleton();
+		$this->config = $c->fetch('base');
 		
 		if (!isset($eq)):
 			// Create an async event queue
@@ -81,7 +82,7 @@ class eventQueue {
 				//Create a normal event queue using 'queue' which is an extension to PEAR LOG.
 				$eq = Log::singleton('queue', '', 'event_queue');
 			
-				if ($dir = @opendir(OWA_PLUGINS_DIR.'/event_handlers')):
+			/*	if ($dir = @opendir(OWA_PLUGINS_DIR.'/event_handlers')):
 					while (($file = @readdir($dir)) !== false) {
 						if (strstr($file, '.php') &&
 							substr($file, -1, 1) != "~" &&
@@ -95,8 +96,8 @@ class eventQueue {
 					}
 		
 					@closedir($dir);
-				endif;	
-			endif;
+				endif;	*/
+			endif; 
 		endif;
 	
 		return $eq;
